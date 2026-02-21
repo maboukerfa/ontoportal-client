@@ -128,6 +128,13 @@ class OntoPortalClient:
         ontology: str | None = None,
         all_results: bool = False,
         page_size: int = 20,
+        lang: str | None = None,
+        portals: list[str] | None = None,
+        also_search_properties: bool | None = None,
+        also_search_obsolete: bool | None = None,
+        also_search_views: bool | None = None,
+        require_exact_match: bool | None = None,
+        require_definition: bool | None = None,
     ) -> Iterable[dict[str, Any]]:
         """Search the given text and unroll the paginated results.
 
@@ -135,8 +142,27 @@ class OntoPortalClient:
         :param ontology: Restrict search to a specific ontology
         :param all_results: If True, return all results (all pages). If False, return only the first page.
         :param page_size: Number of results per page (default 20)
+        :param lang: The language to search in
+        :param portals: Restrict search to specific portals
+        :param also_search_properties: If True, search over properties as well
+        :param also_search_obsolete: If True, search over obsolete classes
+        :param also_search_views: If True, search over ontology views
+        :param require_exact_match: If True, require an exact match
+        :param require_definition: If True, require classes to have a definition
         """
-        for page in self.search_paginated(text=text, ontology=ontology, all_results=all_results, page_size=page_size):
+        for page in self.search_paginated(
+            text=text,
+            ontology=ontology,
+            all_results=all_results,
+            page_size=page_size,
+            lang=lang,
+            portals=portals,
+            also_search_properties=also_search_properties,
+            also_search_obsolete=also_search_obsolete,
+            also_search_views=also_search_views,
+            require_exact_match=require_exact_match,
+            require_definition=require_definition,
+        ):
             yield from page.get("collection", [])
 
     def search_paginated(
@@ -146,6 +172,13 @@ class OntoPortalClient:
         start: str = "1",
         all_results: bool = False,
         page_size: int = 20,
+        lang: str | None = None,
+        portals: list[str] | None = None,
+        also_search_properties: bool | None = None,
+        also_search_obsolete: bool | None = None,
+        also_search_views: bool | None = None,
+        require_exact_match: bool | None = None,
+        require_definition: bool | None = None,
     ) -> Iterable[dict[str, Any]]:
         """Search the given text.
 
@@ -154,10 +187,32 @@ class OntoPortalClient:
         :param start: The page to start from (default "1")
         :param all_results: If True, yield all pages. If False, yield only the first page.
         :param page_size: Number of results per page (default 20)
+        :param lang: The language to search in
+        :param portals: Restrict search to specific portals
+        :param also_search_properties: If True, search over properties as well
+        :param also_search_obsolete: If True, search over obsolete classes
+        :param also_search_views: If True, search over ontology views
+        :param require_exact_match: If True, require an exact match
+        :param require_definition: If True, require classes to have a definition
         """
-        params = {"q": text, "include": ["prefLabel"], "page": start, "pagesize": page_size}
+        params: dict[str, Any] = {"q": text, "include": ["prefLabel"], "page": start, "pagesize": page_size}
         if ontology:
             params["ontologies"] = ontology
+        if lang:
+            params["lang"] = lang
+        if portals:
+            params["portals"] = portals
+        if also_search_properties is not None:
+            params["also_search_properties"] = str(also_search_properties).lower()
+        if also_search_obsolete is not None:
+            params["also_search_obsolete"] = str(also_search_obsolete).lower()
+        if also_search_views is not None:
+            params["also_search_views"] = str(also_search_views).lower()
+        if require_exact_match is not None:
+            params["require_exact_match"] = str(require_exact_match).lower()
+        if require_definition is not None:
+            params["require_definition"] = str(require_definition).lower()
+        
         first = True
         while params["page"]:
             result = self.get_json("/search", params)
