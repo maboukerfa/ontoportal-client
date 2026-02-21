@@ -1,5 +1,6 @@
 """Utilities for interacting with OntoPortal."""
 
+import xml.etree.ElementTree as ET
 from collections.abc import Iterable
 from typing import Any, ClassVar, Literal, cast
 from urllib.parse import quote
@@ -97,12 +98,14 @@ class OntoPortalClient:
         """Get ontologies."""
         return self.get_json("ontologies")  # type:ignore
 
-    def get_ontology_versions(self, ontology: str) -> set[str]:
-        """Get all versions for the given ontology."""
-        return {
-            result["version"]
-            for result in self.get_json(f"/ontologies/{ontology.upper()}/submissions")
-        }
+    def get_ontology_versions(self, ontology: str) -> list[dict[str, Any]]:
+        """Get all submissions for the given ontology (all metadata for each version)."""
+        return self.get_json(f"/ontologies/{ontology.upper()}/submissions")
+
+    def get_latest_changelog(self, ontology: str, version_id: int) -> dict[str, Any]:
+        """Get the changelog between this version and the previous one."""
+        res = self.get_response(f"/ontologies/{ontology.upper()}/submissions/{version_id}/download_diff")
+        return _parse_diff(res.text)
 
     def annotate(
         self, text: str, ontology: str | None = None, require_exact_match: bool = True
@@ -119,21 +122,48 @@ class OntoPortalClient:
             params["ontologies"] = ontology
         return self.get_json("/annotator", params=params)  # type:ignore
 
-    def search(self, text: str, ontology: str | None = None) -> Iterable[dict[str, Any]]:
-        """Search the given text and unroll the paginated results."""
-        for page in self.search_paginated(text=text, ontology=ontology):
+    def search(
+        self,
+        text: str,
+        ontology: str | None = None,
+        all_results: bool = False,
+        page_size: int = 20,
+    ) -> Iterable[dict[str, Any]]:
+        """Search the given text and unroll the paginated results.
+
+        :param text: The text to search for
+        :param ontology: Restrict search to a specific ontology
+        :param all_results: If True, return all results (all pages). If False, return only the first page.
+        :param page_size: Number of results per page (default 20)
+        """
+        for page in self.search_paginated(text=text, ontology=ontology, all_results=all_results, page_size=page_size):
             yield from page.get("collection", [])
 
     def search_paginated(
-        self, text: str, ontology: str | None = None, start: str = "1"
+        self,
+        text: str,
+        ontology: str | None = None,
+        start: str = "1",
+        all_results: bool = False,
+        page_size: int = 20,
     ) -> Iterable[dict[str, Any]]:
-        """Search the given text."""
-        params = {"q": text, "include": ["prefLabel"], "page": start}
+        """Search the given text.
+
+        :param text: The text to search for
+        :param ontology: Restrict search to a specific ontology
+        :param start: The page to start from (default "1")
+        :param all_results: If True, yield all pages. If False, yield only the first page.
+        :param page_size: Number of results per page (default 20)
+        """
+        params = {"q": text, "include": ["prefLabel"], "page": start, "pagesize": page_size}
         if ontology:
             params["ontologies"] = ontology
+        first = True
         while params["page"]:
             result = self.get_json("/search", params)
             yield result
+            if not all_results:
+                break
             # `result["nextPage"]` is always present but will be null on the last page
             params["page"] = result["nextPage"]
 
@@ -343,3 +373,34 @@ class LovPortal(PreconfiguredOntoPortalClient):
     """
 
     name = "lovportal"
+
+
+def _parse_diff(text: str) -> dict[str, Any]:
+    """Parse an XML diff report from OntoPortal."""
+    root = ET.fromstring(text)
+    res: dict[str, Any] = {}
+
+    summary_node = root.find("diffSummary")
+    if summary_node is not None:
+        res["summary"] = {
+            node.tag: int(node.text.strip()) if node.text and node.text.strip() else 0
+            for node in summary_node
+        }
+
+    for section in ["changedClasses", "newClasses", "deletedClasses"]:
+        section_node = root.find(section)
+        if section_node is not None:
+            items = []
+            item_tag = section[:-2] if section.endswith("Classes") else section
+            for item_node in section_node.findall(item_tag):
+                item: dict[str, Any] = {}
+                for child in item_node:
+                    tag = child.tag
+                    value = child.text.strip() if child.text else ""
+                    if tag in {"newAxiom", "deletedAxiom"}:
+                        item.setdefault(tag + "s", []).append(value)
+                    else:
+                        item[tag] = value
+                items.append(item)
+            res[section] = items
+    return res
